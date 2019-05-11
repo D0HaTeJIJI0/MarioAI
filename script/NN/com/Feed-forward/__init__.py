@@ -7,33 +7,35 @@ import glob, os
 import re
 import time
 import threading
+from checkpointer.CheckpointerWithClear import CheckpointerWithClear
 
 env = retro.make(game='SuperMarioBros-Nes', state='Level1-1', record=True)
 owned_image = []
 done = False
 
-def extractLastNumberFromFilename(file_path):
-    filename = os.path.splitext(file_path)[0]
-    last_number = re.findall('\d+', filename)[-1]
-    return int(last_number)
-
-
 def clear_checkpoints(checkpoint_path):
     while not done:
         checkpoint_file_list = glob.glob(os.path.join(checkpoint_path, "neat-checkpoint-*"))
+        if len(checkpoint_file_list) > 1:
+            last_checkpoint = max(checkpoint_file_list, key=lambda file: os.path.getmtime(file))
+            try:
+                for filename in checkpoint_file_list:
+                    if not filename.endswith(last_checkpoint):
+                        os.remove(os.path.join(checkpoint_path, filename))
+            except:
+                print("Error while deleting file : ", filename)
+
         bk_file_list = glob.glob(os.path.join(checkpoint_path, "*.bk2"))
-        last_checkpoint = max(checkpoint_file_list, key=extractLastNumberFromFilename)
-        last_bk = max(bk_file_list, key=extractLastNumberFromFilename)
-        try:
-            for file_path in checkpoint_file_list:
-                if not file_path.endswith(last_checkpoint):
-                    os.remove(os.path.join(checkpoint_path, file_path))
-            for file_path in bk_file_list:
-                if not file_path.endswith(last_bk):
-                    os.remove(os.path.join(checkpoint_path, file_path))
-        except:
-            print("Error while deleting file : ", last_checkpoint)
-        time.sleep(10)
+        if len(bk_file_list) > 2:
+            try:
+                for filename in bk_file_list:
+                    file_path = os.path.join(checkpoint_path, filename)
+                    if os.access(file_path, os.W_OK):
+                        os.remove(file_path)
+            except:
+                print("Error while deleting file : ", file_path)
+    
+        time.sleep(5)
 
 
 def eval_genome_parallel(genome, config):
@@ -127,20 +129,23 @@ def eval_genomes_sequential(genomes, config):
             genome.fitness = fitness_current
     
 
-def run(config_file_path, checkpoints_folder):
+def run(config_file_path, checkpoints_folder_path):
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
                      neat.DefaultSpeciesSet, neat.DefaultStagnation,
                      config_file_path)
     
     # Change dir to save checkpoints in suitable folder
-    os.chdir(checkpoints_folder)
+    if not os.path.exists(checkpoints_folder_path):
+        os.makedirs(checkpoints_folder_path)
+    os.chdir(checkpoints_folder_path)
     # Clear checkpoint folder each 10 seconds
-    threading.Thread(target = clear_checkpoints, args = os.curdir).start()
+    # threading.Thread(target = clear_checkpoints, args = os.curdir).start()
     file_list = glob.glob(os.path.join(os.curdir, "neat-checkpoint-*"))
     p = None
     if (len(file_list) != 0):
-        last_checkpoint = max(file_list, key=extractLastNumberFromFilename)
+        last_checkpoint = max(file_list, key=lambda file: os.path.getmtime(file))
         print(last_checkpoint)
+        # p = neat.Checkpointer.restore_checkpoint(last_checkpoint)
         p = neat.Checkpointer.restore_checkpoint(last_checkpoint)
     else:
         p = neat.Population(config)
@@ -149,7 +154,7 @@ def run(config_file_path, checkpoints_folder):
     stats = neat.StatisticsReporter()
     p.add_reporter(stats)
     # Save the process after each 10 frames
-    p.add_reporter(neat.Checkpointer(10))
+    p.add_reporter(CheckpointerWithClear(10))
     pe = neat.ParallelEvaluator(5, eval_genome_parallel)
 
     # Parallel run
@@ -169,4 +174,4 @@ if __name__ == '__main__':
     # here so that the script will run successfully regardless of the
     # current working directory.
     os.chdir(os.path.dirname(__file__))
-    run('config\\config-feedforward', 'checkpoints')
+    run('config\\config-feedforward', 'checkpoints_10_pop_size')
